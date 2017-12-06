@@ -39,7 +39,6 @@ sock.connect(my_id)
 
 last = 0
 
-
 # Become an candidate and request votes from others
 def request_votes():
     global votes_left, votes_acquired, term, election_timeout, last_hearbeat, status
@@ -105,7 +104,6 @@ def elect_leader():
         'term': term
     }
     sock.send(json.dumps(election_msg))
-
 
 # Leader send empty heartbeat to followers every 100ms
 def send_heartbeat():
@@ -303,7 +301,6 @@ def apply_command():
 
 
 while True:
-
     ready = select.select([sock], [], [], 0.1)[0]
 
     if sock in ready:
