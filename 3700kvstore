@@ -13,10 +13,10 @@ def current_ms():
 
 
 last_hearbeat = current_ms()
-election_timeout = random.randint(0, 500)  # random timeout for election
-heartbeat_timeout = 30
+election_timeout = random.randint(300, 500)  # random timeout for election
+heartbeat_timeout = 100
 is_leader = False
-term = 1  # current term number
+term = 0  # current term number
 votes_left = 1  # votes left in the term
 votes_acquired = 0  # votes acquired in current election
 
@@ -42,9 +42,7 @@ last = 0
 
 # Become an candidate and request votes from others
 def request_votes():
-    global votes_left, votes_acquired, term, election_timeout, last_hearbeat, status
-    # print("I {} become a candidate to ask for votes".format(my_id))
-    election_timeout = random.randint(300, 500)
+    global votes_left, votes_acquired, term, last_hearbeat, status
     last_hearbeat = current_ms()
     votes_acquired += 1
     term += 1
@@ -56,23 +54,23 @@ def request_votes():
         'leader': 'FFFF',
         'term': term
     }
+    # print("I {} become a candidate to ask for votes with term {}".format(my_id, term))
     sock.send(json.dumps(candidate_msg))
 
 
 # Votes for the candidate
 def cast_vote(src):
-    global votes_left, last_hearbeat, election_timeout
+    global votes_left, last_hearbeat
     if votes_left > 0:
-        # print("I {} decided to become a follower to vote for {}".format(my_id, src))
         votes_left -= 1
         last_hearbeat = current_ms()
-        election_timeout = random.randint(300, 500)
         vote_msg = {
             'src': my_id,
             'dst': src,
             'leader': 'FFFF',
             'type': 'vote'
         }
+        # print("I {} decided to become a follower to vote for {}".format(my_id, src))
         sock.send(json.dumps(vote_msg))
 
 
@@ -89,7 +87,7 @@ def recv_vote():
 # Send Leader heartbeat message to let others know I am the new leader
 def elect_leader():
     global is_leader, my_leader, term, votes_acquired, votes_left, nextIndex, matchIndex, status
-    # print('I am the new leader with id: {}'.format(my_id))
+    print('I am the new leader with id: {}'.format(my_id))
     is_leader = True
     my_leader = my_id
     votes_acquired = 0
@@ -123,12 +121,12 @@ def send_heartbeat():
 
 # transition from any role to follower
 def become_follower(leader_id, new_term):
-    global last_hearbeat, election_timeout, my_leader, term, votes_left, votes_acquired, status
-    # print('I {} have a new leader {} with term {}'.format(my_id, leader_id, new_term))
+    global last_hearbeat, election_timeout, my_leader, term, votes_left, votes_acquired, status, is_leader
+    print('I {} have a new leader {} with term {}'.format(my_id, leader_id, new_term))
     last_hearbeat = current_ms()
-    election_timeout = random.randint(300, 500)
-    if leader_id == 'FFFF':
-        print('leader_id is {} in line 131'.format(leader_id))
+    is_leader = False
+    # if leader_id == 'FFFF':
+    # print('leader_id is {} in line 131'.format(leader_id))
     my_leader = leader_id
     term = new_term  # TODO: not sure how it changes0/500
     votes_left = 1
@@ -163,8 +161,7 @@ def append_entries():
         # if len(logs)-1 >= item:
         # if index == 0:
             # print('send append_entries from logs[] {} to losg[] {}'.format(item, len(logs)))
-            # print('send append_entries to {} with new entries size {}'.format(replica_ids[index], len(
-                # logs[item:min(item + 20, len(logs))])))
+        print('send append_entries to {} from logs[] {} to losg[] {}'.format(replica_ids[index], item, len(logs)-1))
         append_entry_msg = {
             'term': term,
             'prevLogIndex': item - 1,
@@ -186,9 +183,7 @@ def append_entries():
 # 4. Append mew entries not already in the log
 # 5. If leaderCommit > commit_index, set commit_index = min(leaderCommit, index of last new entry)
 def process_new_entry(msg):
-    global term, last_hearbeat, commit_index
-    last_hearbeat = current_ms()
-    my_leader = msg['src']
+    global term, commit_index
     # print('I received new append_entries request')
     if msg['prevLogIndex'] < len(logs) and term <= msg['term']:
         # Will Accept this appendEntry
@@ -263,16 +258,14 @@ def handle_get_request(msg):
     sock.send(json.dumps(response))
 
 
-
 # apply command by leader
 def apply_command_by_leader():
     global last_applied
     # Apply command to state_machine
     for item in logs[last_applied + 1:commit_index+1]:
-        # print("logs[] {} has been applied with len(logs) {}".format(last_applied+1, len(logs)))
+        print("logs[] {} has been applied with len(logs) {}".format(last_applied+1, len(logs)))
         last_applied += 1
         item = item['command']
-        # print('I leader {}, deal a put request from client'.format(my_id))
         database[item['key']] = item['value']
         # Send response to client
         response = {
@@ -291,7 +284,6 @@ def apply_command_by_followers():
     for item in logs[last_applied + 1:commit_index]:
         last_applied += 1
         item = item['command']
-        # print('I leader {}, deal a put request from client'.format(my_id))
         database[item['key']] = item['value']
 
 
@@ -338,22 +330,14 @@ while True:
                 recv_vote()
             else:
                 sock.send(json.dumps(msg))
-        # Get notice of new Leader
-        elif msg['type'] in ['new_leader'] and msg['term'] >= term:
+        # Get notice of new Leader/
+        # Receive normal heartbeat/
+        # if leader receive heartbeat/append_entry, change from leader to follower
+        # if follower receive heartbeat/append_entry, update last_hearbeat and leader
+        elif msg['type'] in ['new_leader', 'heartbeat', 'append_entry'] and msg['term'] >= term:
             become_follower(msg['src'], msg['term'])
-        # Receive normal heartbeat
-        elif msg['type'] in ['heartbeat'] and not is_leader:
-            last_hearbeat = current_ms()
-            if msg['term'] > term:
-                if msg['src'] == 'FFFF':
-                    print('in line 338')
-                my_leader = msg['src']
-                term = msg['term']
-                votes_left = 1
-                votes_acquired = 0
-
-        # TODO: if leader receive heartbeat, change from leader to follower
-
+            if msg['type'] == 'append_entry':
+                process_new_entry(msg)
         elif msg['type'] in ['get', 'put']:
             # In ELECTION status, wait until new leader comes
             if status == "ELECTION":
@@ -370,18 +354,15 @@ while True:
                         # Send any reply to client
                         handle_get_request(msg)
                     else:
-                        # print('logs with size {} add new log entry to {}'.format(len(logs), len(logs)+1))
+                        print('logs with size {} add new log entry to {}'.format(len(logs), len(logs)+1))
                         command = build_command(msg)
                         logs.append({'term': term, 'command': command})
                         # append_entries()
-        elif msg['type'] == 'append_entry' and not is_leader:
-            last_hearbeat = current_ms()
-            process_new_entry(msg)
         elif msg['type'] == 'accept_entry' and is_leader:
             # print('I receive accpet_entry has been replicated')
             process_replicated_entry(msg)
         elif msg['type'] == 'reject_entry' and is_leader:
-            # print('I receive reject_entry need to retry with smaller nextIndex')
+            print('I receive reject_entry need to retry with smaller nextIndex')
             process_rejected_entry(msg)
 
         # not receive empty AppendEntries, leader might die
@@ -395,17 +376,14 @@ while True:
         # Move all to do commands to logs
         if is_leader and (len(todo_list) > 0):
             for item in todo_list:
+                print('logs with size {} add new log entry to {}'.format(len(logs), len(logs) + 1))
                 logs.append({'term': term, 'command': build_command(item['command'])})
                 todo_list.remove(item)
-            # logs.extend(todo_list)
-            # del todo_list[:]
 
         if is_leader and (current_ms() - last_hearbeat >= heartbeat_timeout):
             # From commit_index to len(logs): Send append_entries to Replicate logs
             # every 100ms
             append_entries()
-        # From commit_index to len(logs): Check to see if need to update commit_index
-        # check_commit_status()
         # From applied_index to commit_index: Apply command to state_machiine
             apply_command()
 
